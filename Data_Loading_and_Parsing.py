@@ -1,3 +1,6 @@
+# write by chen ll
+# 2025.4.23
+# welcome to email 1292593513@qq.com
 from nptdms import TdmsFile
 import numpy as np
 import os
