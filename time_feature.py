@@ -1,15 +1,18 @@
 import os
 import numpy as np
 import pandas as pd
+import matplotlib as mpl
 import matplotlib.pyplot as plt
 from scipy import stats
+from sklearn.metrics import confusion_matrix, classification_report, accuracy_score
+import seaborn as sns
 from sklearn.neural_network import MLPClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import confusion_matrix, classification_report, accuracy_score
-import seaborn as sns
 
-plt.rcParams['font.family'] = ['SimHei']
+plt.rcParams['font.family'] = ['Times New Roman']
+
+
 # 定义特征提取函数
 def extract_features(data):
     """
@@ -51,6 +54,134 @@ def extract_features(data):
         features.extend([mean, rms, kurtosis, crest_factor, form_factor])
 
     return np.array(features)
+
+
+# 自定义MLP类以记录训练过程中的loss和准确率
+class CustomMLP(MLPClassifier):
+    def __init__(self, max_epochs=50, **kwargs):
+        self.max_epochs = max_epochs
+        self.train_loss_curve_ = []  # 每个epoch的训练loss
+        self.val_loss_curve_ = []  # 每个epoch的验证loss
+        self.train_acc_curve_ = []  # 训练准确率
+        self.val_acc_curve_ = []  # 验证准确率
+        super().__init__(**kwargs)
+
+    def _compute_loss(self, X, y):
+        """计算给定数据的loss值"""
+        # 获取当前模型的预测结果（概率分布）
+        y_prob = self._forward_pass_fast(X)
+
+        # 转换为独热编码
+        y_one_hot = np.zeros((y.shape[0], len(np.unique(y))), dtype=np.float64)
+        for i, label in enumerate(y):
+            y_one_hot[i, label] = 1
+
+        # 计算损失（交叉熵）
+        loss = -np.sum(y_one_hot * np.log(y_prob + 1e-10)) / X.shape[0]
+        return loss
+
+    def fit(self, X, y, X_val=None, y_val=None):
+        # 重置所有曲线数据
+        self.train_loss_curve_ = []
+        self.val_loss_curve_ = []
+        self.train_acc_curve_ = []
+        self.val_acc_curve_ = []
+
+        # 原始loss_curve_将包含所有迭代的loss，但我们不会直接使用它
+        self.loss_curve_ = []
+
+        # 训练过程中不需要verbose输出
+        original_verbose = self.verbose
+        self.verbose = False
+
+        # 保存最佳模型参数
+        best_val_loss = np.inf
+        best_params = None
+
+        # 禁用warm_start，确保每次训练一个完整的epoch
+        original_warm_start = self.warm_start
+        self.warm_start = False
+
+        for epoch in range(self.max_epochs):
+            # 设置只训练一个epoch
+            self.max_iter = 1
+
+            # 训练一个epoch
+            super().fit(X, y)
+
+            # 计算训练集loss和准确率
+            train_loss = self._compute_loss(X, y)
+            self.train_loss_curve_.append(train_loss)
+
+            train_pred = self.predict(X)
+            train_acc = accuracy_score(y, train_pred)
+            self.train_acc_curve_.append(train_acc)
+
+            # 如果提供了验证集，计算验证集loss和准确率
+            if X_val is not None and y_val is not None:
+                val_loss = self._compute_loss(X_val, y_val)
+                self.val_loss_curve_.append(val_loss)
+
+                val_pred = self.predict(X_val)
+                val_acc = accuracy_score(y_val, val_pred)
+                self.val_acc_curve_.append(val_acc)
+
+                # 记录最佳模型（基于验证loss）
+                if val_loss < best_val_loss:
+                    best_val_loss = val_loss
+                    best_params = [c.copy() for c in self.coefs_], [i.copy() for i in self.intercepts_]
+
+                # 输出信息
+                print(f"Epoch {epoch + 1}/{self.max_epochs}, "
+                      f"train_loss: {train_loss:.6f}, val_loss: {val_loss:.6f}, "
+                      f"train_acc: {train_acc:.4f}, val_acc: {val_acc:.4f}")
+            else:
+                # 无验证集时只输出训练信息
+                print(f"Epoch {epoch + 1}/{self.max_epochs}, "
+                      f"train_loss: {train_loss:.6f}, train_acc: {train_acc:.4f}")
+
+            # 启用warm_start为后续epoch准备
+            self.warm_start = True
+
+        # 恢复原始设置
+        self.verbose = original_verbose
+        self.warm_start = original_warm_start
+
+        # 如果有验证集，并且early_stopping为True，使用最佳参数
+        if self.early_stopping and X_val is not None and y_val is not None and best_params is not None:
+            self.coefs_, self.intercepts_ = best_params
+            print(f"使用验证集选择的最佳模型参数 (val_loss: {best_val_loss:.6f})")
+
+        return self
+
+    def plot_learning_curves(self):
+        """绘制训练和验证的loss曲线与准确率曲线"""
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(15, 5))
+
+        # 绘制loss曲线
+        epochs = range(1, len(self.train_loss_curve_) + 1)
+        ax1.plot(epochs, self.train_loss_curve_, 'b-', label='train Loss')
+        if self.val_loss_curve_:
+            ax1.plot(epochs, self.val_loss_curve_, 'r-', label='val Loss')
+        ax1.set_xlabel('Epoch')
+        ax1.set_ylabel('Loss')
+        ax1.set_title('MLP Loss')
+        ax1.grid(True)
+        ax1.legend()
+
+        # 绘制准确率曲线
+        ax2.plot(epochs, self.train_acc_curve_, 'b-', label='train accuracy')
+        if self.val_acc_curve_:
+            ax2.plot(epochs, self.val_acc_curve_, 'r-', label='val accuracy')
+        ax2.set_xlabel('Epoch')
+        ax2.set_ylabel('accuracy')
+        ax2.set_title('MLP accuracy')
+        ax2.grid(True)
+        ax2.legend()
+
+        plt.tight_layout()
+        plt.savefig('mlp_learning_curves.png')
+        plt.close()
 
 
 # 主程序
@@ -98,11 +229,36 @@ def main():
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
 
-    # 创建并训练MLP分类器
-    mlp = MLPClassifier(hidden_layer_sizes=(100, 50), max_iter=1000, activation='relu',
-                        solver='adam', random_state=43, early_stopping=True, verbose=True)
+    # 创建并训练自定义MLP分类器，限定50轮训练
+    mlp = CustomMLP(
+        max_epochs=50,
+        hidden_layer_sizes=(100, 50),
+        activation='relu',
+        solver='adam',
+        random_state=43,
+        early_stopping=True
+    )
 
-    mlp.fit(X_train_scaled, y_train)
+    # 使用自定义的fit方法训练模型，并传入验证集
+    X_train_subset, X_val, y_train_subset, y_val = train_test_split(
+        X_train_scaled, y_train, test_size=0.2, random_state=43, stratify=y_train
+    )
+
+    mlp.fit(X_train_subset, y_train_subset, X_val, y_val)
+
+    # 绘制学习曲线
+    mlp.plot_learning_curves()
+
+    # 保存训练历史到CSV文件
+    history_df = pd.DataFrame({
+        'epoch': range(1, len(mlp.loss_curve_)+1),
+        'train_loss': mlp.train_loss_curve_,
+        'val_loss':mlp.val_loss_curve_,
+        'train_accuracy': mlp.train_acc_curve_,
+        'val_accuracy': mlp.val_acc_curve_
+    })
+    history_df.to_csv('mlp_training_history.csv', index=False)
+    print("训练历史已保存到 mlp_training_history.csv")
 
     # 在测试集上评估模型
     y_pred = mlp.predict(X_test_scaled)
@@ -113,16 +269,18 @@ def main():
 
     # 计算准确率
     accuracy = accuracy_score(y_test, y_pred)
-    print(f"准确率: {accuracy:.4f}")
+    print(f"测试集准确率: {accuracy:.4f}")
 
     # 绘制混淆矩阵
+    mpl.rcParams.update({'font.size': 20})
     plt.figure(figsize=(10, 8))
     cm = confusion_matrix(y_test, y_pred)
     sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', xticklabels=range(5), yticklabels=range(5))
-    plt.xlabel('预测标签')
-    plt.ylabel('真实标签')
-    plt.title('混淆矩阵')
-    plt.savefig('confusion_matrix.png')
+    plt.xlabel('Predict class')
+    plt.ylabel('Ture class')
+    #plt.title('混淆矩阵')
+    plt.savefig('Time_confusion_matrix.png')
+    plt.close()
 
     # 特征重要性分析（通过特征与标签的相关性）
     feature_names = []
@@ -130,14 +288,15 @@ def main():
         for feature in ['Mean', 'RMS', 'Kurtosis', 'Crest Factor', 'Form Factor']:
             feature_names.append(f"{phase}_{feature}")
 
-    # 保存特征重要性
-    feature_importance = np.abs(np.corrcoef(X.T, y)[:-1, -1])
-    plt.figure(figsize=(12, 8))
-    plt.barh(feature_names, feature_importance)
-    plt.xlabel('相关性 (绝对值)')
-    plt.title('特征重要性')
-    plt.tight_layout()
-    plt.savefig('feature_importance.png')
+    # # 保存特征重要性
+    # feature_importance = np.abs(np.corrcoef(X.T, y)[:-1, -1])
+    # plt.figure(figsize=(12, 8))
+    # plt.barh(feature_names, feature_importance)
+    # plt.xlabel('相关性 (绝对值)')
+    # plt.title('特征重要性')
+    # plt.tight_layout()
+    # plt.savefig('feature_importance.png')
+    # plt.close()
 
     # 保存模型和标准化器
     import joblib
