@@ -7,8 +7,8 @@ import time
 from tqdm import tqdm  # 用于显示进度条
 
 # 全局参数
-WINDOW_SIZE = 300  # 每个窗口包含的数据点数
-STEP_SIZE = 150  # 窗口之间的步长
+WINDOW_SIZE = 5000  # 每个窗口包含的数据点数
+STEP_SIZE = 6000  # 窗口之间的步长
 SOURCE_FOLDER = '1.0kW/clean_data_csv'  # 源数据文件夹
 OUTPUT_FOLDER = '1.0kW/clean_data_csv'  # 输出数据文件夹
 PHASE_COLUMNS = ['cDAQ1Mod2/ai0', 'cDAQ1Mod2/ai2', 'cDAQ1Mod2/ai3']  # 三相电流列名
